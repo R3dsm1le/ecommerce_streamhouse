@@ -1,0 +1,30 @@
+# ==============================================================================
+# DEPENDENCIAS PYTHON PARA STREAMHOUSE LOCAL (WINDOWS)
+# ==============================================================================
+
+# 1. kafka-python-ng
+# ¿Por qué esta librería? Es el cliente oficial para enviar y recibir eventos en Kafka desde Python.
+# ¿Por qué '-ng'? Significa 'Next-Gen'. El paquete original 'kafka-python' se quedó estancado y
+# falla en Python moderno (3.12+). Este fork moderno soluciona esos errores.
+# ¿Dónde se usa? En: data_gen/e_commerce_data_gen.py
+kafka-python-ng
+
+# 2. databricks-sdk
+# ¿Por qué esta librería? Es el SDK oficial que usan los Data Engineers en empresas para
+# comunicarse con Databricks (administrar Unity Catalog y correr SQL en clústeres).
+# Aquí lo usamos apuntando a nuestro emulador local MiniLake.
+# ¿Dónde se usa? En: data_processing/data_processing.py
+databricks-sdk
+
+# 3. duckdb
+# ¿Por qué esta librería? Es conocido como el "SQLite del Big Data". Es un motor de base de datos
+# analítico columnar ultrarrápido que corre embebido en memoria y puede consultar archivos
+# Parquet directamente desde tu disco con sentencias SQL sin levantar servidores pesados.
+# ¿Dónde se usa? En: dashboard/dashboard_app.py
+duckdb
+
+# 4. streamlit
+# ¿Por qué esta librería? Permite a los Data Engineers crear dashboards web interactivos en tiempo
+# real escribiendo únicamente código en Python, sin necesidad de saber HTML, CSS ni JavaScript.
+# ¿Dónde se usa? En: dashboard/dashboard_app.py
+streamlit

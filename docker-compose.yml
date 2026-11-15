@@ -1,0 +1,116 @@
+services:
+  # ============================================================================
+  # 1. APACHE KAFKA (Buffer de streaming en modo KRaft)
+  # ============================================================================
+  # ¿Qué es? Es una cola distribuida de ultra-alta velocidad. Guarda los eventos
+  # que genera 'e_commerce_data_gen.py' de forma ordenada e inmutable.
+  # ============================================================================
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka
+    ports:
+      # Puerto 9092:  Comunicación interna entre contenedores dentro de Docker.
+      # Puerto 29092: Comunicación externa hacia tu PC (Windows/localhost).
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      # KAFKA_NODE_ID:
+      # Identificador único de este nodo en el clúster. Como solo tenemos un nodo, vale 1.
+      KAFKA_NODE_ID: 1
+
+      # KAFKA_PROCESS_ROLES:
+      # En Kafka tradicional se usaba ZooKeeper para coordinar. Con KRaft (Kafka Raft),
+      # un nodo puede ser 'broker' (guarda y entrega mensajes) y 'controller' (administra el clúster).
+      KAFKA_PROCESS_ROLES: broker,controller
+
+      # KAFKA_LISTENERS:
+      # En qué puertos físicos del contenedor se abre Kafka a la escucha:
+      # - PLAINTEXT://:9092   -> Para tráfico interno de Docker.
+      # - CONTROLLER://:9093  -> Para la comunicación interna de administración KRaft.
+      # - EXTERNAL://:29092    -> Para tráfico que viene desde tu PC (localhost).
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+
+      # KAFKA_ADVERTISED_LISTENERS (¡CRUCIAL PARA ENTENDER KAFKA!):
+      # Cuando un cliente (tu script en Python o Flink) se conecta, Kafka le dice:
+      # "Para mandarme mensajes, usa esta dirección":
+      # - A los contenedores de Docker les dice: "Búscame en kafka:9092".
+      # - A tu script en Windows le dice: "Búscame en localhost:29092".
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+
+      # KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:
+      # Asocia cada nombre de listener con su protocolo de seguridad (PLAINTEXT = sin cifrado SSL para desarrollo local).
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+
+      # KAFKA_CONTROLLER_QUORUM_VOTERS:
+      # Define qué nodos votan para elegir líder en KRaft. Formato: nodo_id@host:puerto.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # KAFKA_CONTROLLER_LISTENER_NAMES:
+      # Le indica a Kafka cuál de los listeners se usa exclusivamente para el protocolo de control KRaft.
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+  # ============================================================================
+  # 2. MINILAKE (Emulador de Databricks + Delta Lake + DuckDB)
+  # ============================================================================
+  # ¿Qué es? Emula localmente la API de Databricks en la nube.
+  # Permite que 'data_processing.py' use el SDK de Databricks y consulte tablas
+  # con DuckDB sin tener que pagar una suscripción en Azure o AWS.
+  # ============================================================================
+  minilake:
+    image: ghcr.io/dmux/minilake:latest
+    container_name: minilake
+    ports:
+      # Puerto 8000: Permite abrir el editor SQL web en http://localhost:8000/ui/
+      # y recibir peticiones de Databricks SDK en http://localhost:8000
+      - "8000:8000"
+    volumes:
+      # EL PUENTE DEL LAKEHOUSE (Bind Mount):
+      # Conecta la carpeta './data' de tu proyecto con '/data' dentro del contenedor.
+      # Todo archivo Parquet que Flink deposite en './data' estará visible inmediatamente en MiniLake.
+      - ./data:/data
+
+  # ============================================================================
+  # 3. FLINK JOBMANAGER (El "Cerebro / Maestro" de Flink)
+  # ============================================================================
+  # ¿Qué es? Apache Flink tiene arquitectura Maestro-Trabajador.
+  # El JobManager recibe tu código de streaming, lo convierte en un grafo de tareas
+  # y coordina qué hace cada trabajador.
+  # ============================================================================
+  flink-jobmanager:
+    build: ./flink
+    container_name: flink-jobmanager
+    ports:
+      # Puerto 8081: Interfaz web de Flink (http://localhost:8081) para ver métricas y jobs activos.
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        #jobmanager.rpc.address: Dirección de red donde los trabajadores (TaskManagers) encuentran al maestro
+        jobmanager.rpc.address: flink-jobmanager
+    volumes:
+      - ./data:/data
+      - ./flink:/opt/flink/usrlib
+
+  # ============================================================================
+  # 4. FLINK TASKMANAGER (El "Músculo / Trabajador" de Flink)
+  # ============================================================================
+  # ¿Qué es? Es el proceso que ejecuta el trabajo pesado: lee los mensajes de Kafka,
+  # calcula la suma de ventas por minuto (ventanas) y escribe los archivos Parquet.
+  # ============================================================================
+  flink-taskmanager:
+    build: ./flink
+    container_name: flink-taskmanager
+    depends_on:
+      # El trabajador no puede iniciar sin que el maestro esté vivo
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        # numberOfTaskSlots: Cuántos hilos de procesamiento en paralelo puede ejecutar este trabajador
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./data:/data
+      - ./flink:/opt/flink/usrlib
